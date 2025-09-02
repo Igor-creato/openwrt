@@ -1,6 +1,6 @@
 #!/bin/ash
-# Безопасное обновление OpenWrt до последнего стабильного релиза.
-# Требуются: curl, awk, sha256sum, ubus, (желательно) jsonfilter. Подходит для BusyBox.
+# Безопасное обновление OpenWrt до последнего стабильного релиза (BusyBox-friendly).
+# Нужны: curl, awk, sha256sum, ubus, (желательно) jsonfilter.
 set -eu
 
 CURL="${CURL:-curl -fsSL}"
@@ -30,7 +30,6 @@ json_get(){
 MODEL="$(json_get '@.model')"
 BOARD_NAME="$(json_get '@.board_name')"   # напр. xiaomi,redmi-router-ac2100
 
-# Берём target/subtarget из /etc/openwrt_release
 . /etc/openwrt_release 2>/dev/null || true
 TARGET="${DISTRIB_TARGET%/*}"
 SUBTARGET="${DISTRIB_TARGET#*/}"
@@ -41,23 +40,31 @@ RAM_KB="$(awk '/MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo "")"
 
 fmt_bytes(){ awk -v b="$1" 'BEGIN{split("B KB MB GB TB",u);s=1024;i=1;while(b>=s&&i<5){b/=s;i++}printf("%.1f %s",b,u[i])}'; }
 
-# Размер флэша без strtonum(): читаем /proc/mtd и суммируем hex с префиксом 16#
+# ---------- 1.1) Размер флэша: суммируем HEX из /proc/mtd чистым awk (без strtonum/16#) ----------
 flash_bytes_mtd(){
   [ -r /proc/mtd ] || return 1
-  local sum=0 dev sz rest
-  while read -r dev sz rest; do
-    case "$dev" in
-      mtd[0-9]*:) sum=$(( sum + 16#${sz} ));;
-    esac
-  done < /proc/mtd
-  [ "$sum" -gt 0 ] && echo "$sum"
+  awk '
+    function hex2dec(h,   i,n,c,v,res) {
+      res=0; n=length(h)
+      for (i=1;i<=n;i++){
+        c=substr(h,i,1)
+        if (c>="0" && c<="9") v=c+0
+        else if (c>="a" && c<="f") v=10+index("abcdef",c)-1
+        else if (c>="A" && c<="F") v=10+index("ABCDEF",c)-1
+        else continue
+        res = res*16 + v
+      }
+      return res
+    }
+    $1 ~ /^mtd[0-9]+:$/ { sum += hex2dec($2) }
+    END { if (sum>0) print sum }
+  ' /proc/mtd
 }
 
 FLASH_BYTES="$(flash_bytes_mtd || true)"
 if [ -z "${FLASH_BYTES:-}" ]; then
   rom_kb="$(df -k /rom 2>/dev/null | awk 'NR==2{print $2}')"
   ovl_kb="$(df -k /overlay 2>/dev/null | awk 'NR==2{print $2}')"
-  # защищённая арифметика с значениями по умолчанию
   rom_kb="${rom_kb:-0}"; ovl_kb="${ovl_kb:-0}"
   if [ "$rom_kb" -gt 0 ] || [ "$ovl_kb" -gt 0 ]; then
     FLASH_BYTES=$(( (rom_kb + ovl_kb) * 1024 ))
@@ -66,24 +73,13 @@ if [ -z "${FLASH_BYTES:-}" ]; then
   fi
 fi
 
-if [ -n "${FLASH_BYTES:-}" ]; then
-  FLASH_HUMAN="$(fmt_bytes "$FLASH_BYTES")"
-else
-  FLASH_HUMAN="н/д"
-fi
+if [ -n "${FLASH_BYTES:-}" ]; then FLASH_HUMAN="$(fmt_bytes "$FLASH_BYTES")"; else FLASH_HUMAN="н/д"; fi
+if [ -n "${RAM_KB:-}" ]; then RAM_HUMAN="$(fmt_bytes $(( ${RAM_KB:-0} * 1024 )) )"; else RAM_HUMAN="н/д"; fi
 
-if [ -n "${RAM_KB:-}" ]; then
-  # безопасная арифметика: подставляем 0 по умолчанию
-  RAM_HUMAN="$(fmt_bytes $(( ${RAM_KB:-0} * 1024 )) )"
-else
-  RAM_HUMAN="н/д"
-fi
-
-# ---------- 2) Определяем последний стабильный релиз без sort -V ----------
+# ---------- 2) Последний стабильный релиз (без sort -V) ----------
 RELEASES_HTML="$TMPDIR/releases.html"
 $CURL "https://downloads.openwrt.org/releases/" > "$RELEASES_HTML" || die "Не открыть список релизов"
 
-# Выбираем макс. X.Y[.Z], игнорируем rc/snapshot
 LATEST_STABLE="$(awk '
   match($0,/href="([0-9]+(\.[0-9]+){1,2})\/"/,m){
     v=m[1]
@@ -99,14 +95,14 @@ LATEST_STABLE="$(awk '
 
 BASE_URL="https://downloads.openwrt.org/releases/$LATEST_STABLE/targets/$TARGET/$SUBTARGET"
 
-# ---------- 3) Выбираем sysupgrade-образ по листингу каталога ----------
+# ---------- 3) Подбираем sysupgrade-образ по листингу каталога ----------
 $CURL "$BASE_URL/" > "$TMPDIR/list.html" || die "Не открыть $BASE_URL/"
 
-BN="$BOARD_NAME"                 # xiaomi,redmi-router-ac2100
-DEV="${BN#*,}"                   # redmi-router-ac2100
+BN="$BOARD_NAME"
+DEV="${BN#*,}"                           # redmi-router-ac2100
 CAND1="$DEV"
-CAND2="$(echo "$BN" | sed 's/,/_/')"        # xiaomi_redmi-router-ac2100
-CAND3="$(echo "$CAND2" | tr '_' '-')"       # xiaomi-redmi-router-ac2100
+CAND2="$(echo "$BN" | sed 's/,/_/')"     # xiaomi_redmi-router-ac2100
+CAND3="$(echo "$CAND2" | tr '_' '-')"    # xiaomi-redmi-router-ac2100
 
 FILES="$(sed -n 's/.*href="\([^"]*\)".*/\1/p' "$TMPDIR/list.html" | grep -F "sysupgrade" || true)"
 
@@ -117,7 +113,7 @@ for pat in "$CAND1" "$CAND2" "$CAND3"; do
   [ -n "$found" ] && IMAGE_NAME="$found"
 done
 
-# Если по паттернам не нашли, но sysupgrade-файл один — берём его
+# Если не нашли по паттернам, но sysupgrade один — берём его
 if [ -z "$IMAGE_NAME" ]; then
   only="$(echo "$FILES" | wc -l)"
   [ "$only" = "1" ] && IMAGE_NAME="$(echo "$FILES")"
@@ -128,17 +124,13 @@ fi
 IMAGE_URL="$BASE_URL/$IMAGE_NAME"
 SHA256_URL="$BASE_URL/sha256sums"
 
-# ---------- 4) Скачиваем образ и проверяем SHA256 ----------
+# ---------- 4) Скачивание и проверка SHA256 ----------
 info "Скачиваем образ: $IMAGE_NAME"
 $CURL "$IMAGE_URL" -o "$TMPDIR/$IMAGE_NAME" || die "Не удалось скачать образ"
 $CURL "$SHA256_URL" -o "$TMPDIR/sha256sums" || die "Не удалось скачать sha256sums"
+( cd "$TMPDIR" && grep "  $IMAGE_NAME\$" sha256sums | sha256sum -c - ) || die "Контрольная сумма не совпадает"
 
-(
-  cd "$TMPDIR"
-  grep "  $IMAGE_NAME\$" sha256sums | sha256sum -c - 
-) || die "Контрольная сумма не совпадает"
-
-# ---------- 5) Проверка совместимости и подтверждение ----------
+# ---------- 5) Проверка совместимости и прошивка ----------
 info "Проверка совместимости (sysupgrade -T)…"
 sysupgrade -T "$TMPDIR/$IMAGE_NAME" || die "Образ не прошёл проверку совместимости (см. вывод sysupgrade -T)"
 
