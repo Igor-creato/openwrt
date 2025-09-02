@@ -18,7 +18,10 @@ wget -qO- https://raw.githubusercontent.com/Igor-creato/openwrt/main/singbox-rou
 sh -c "$(curl -fsSL https://raw.githubusercontent.com/Igor-creato/openwrt/main/safe-openwrt-upgrade.sh)"
 ```
 # 1) Скачаем свежую версию в /tmp (обход кеша через query string)
+```
 curl -fsSLo /tmp/safe-openwrt-upgrade.sh "https://raw.githubusercontent.com/Igor-creato/openwrt/main/safe-openwrt-upgrade.sh?$(date +%s)"
-
+```
 # 2) Запуск с трассировкой
+```
 ash -x /tmp/safe-openwrt-upgrade.sh
+```
