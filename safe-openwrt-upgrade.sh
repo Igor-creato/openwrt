@@ -1,8 +1,6 @@
 #!/bin/ash
 # Безопасное обновление OpenWrt до последнего стабильного релиза.
-# Работает на BusyBox, без GNU-утилит, без jq. Требуются: curl, awk, sha256sum, ubus, (желательно) jsonfilter.
-# Документация: sysupgrade, releases tree и boards info на openwrt.org.
-
+# Требуются: curl, awk, sha256sum, ubus, (желательно) jsonfilter. Подходит для BusyBox.
 set -eu
 
 CURL="${CURL:-curl -fsSL}"
@@ -14,11 +12,11 @@ trap cleanup EXIT INT TERM
 
 die(){ echo "[ERROR] $*" >&2; exit 1; }
 info(){ echo "[INFO]  $*"; }
+need(){ command -v "$1" >/dev/null 2>&1 || die "Не найдено: $1"; }
 
-need_bin(){ command -v "$1" >/dev/null 2>&1 || die "Не найдено: $1"; }
-for b in curl awk sha256sum ubus; do need_bin "$b"; done
+for b in curl awk sha256sum ubus; do need "$b"; done
 
-# --- 1) Инвентаризация устройства
+# ---------- 1) Инвентаризация устройства ----------
 UBUS_JSON="$(ubus -S call system board '{}')"
 
 json_get(){
@@ -30,7 +28,9 @@ json_get(){
 }
 
 MODEL="$(json_get '@.model')"
-BOARD_NAME="$(json_get '@.board_name')"            # напр. xiaomi,redmi-router-ac2100
+BOARD_NAME="$(json_get '@.board_name')"   # напр. xiaomi,redmi-router-ac2100
+
+# Дёргаем целевой target/subtarget из /etc/openwrt_release (не глобальные переменные шелла!)
 . /etc/openwrt_release 2>/dev/null || true
 TARGET="${DISTRIB_TARGET%/*}"
 SUBTARGET="${DISTRIB_TARGET#*/}"
@@ -41,7 +41,7 @@ RAM_KB="$(awk '/MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo "")"
 
 fmt_bytes(){ awk -v b="$1" 'BEGIN{split("B KB MB GB TB",u);s=1024;i=1;while(b>=s&&i<5){b/=s;i++}printf("%.1f %s",b,u[i])}'; }
 
-# Без strtonum: суммируем hex из /proc/mtd в чистом ash
+# Размер флэша без strtonum(): читаем /proc/mtd и суммируем hex с префиксом 16#
 flash_bytes_mtd(){
   [ -r /proc/mtd ] || return 1
   local sum=0 dev sz rest
@@ -57,4 +57,110 @@ FLASH_BYTES="$(flash_bytes_mtd || true)"
 if [ -z "${FLASH_BYTES:-}" ]; then
   rom_kb="$(df -k /rom 2>/dev/null | awk 'NR==2{print $2}')"
   ovl_kb="$(df -k /overlay 2>/dev/null | awk 'NR==2{print $2}')"
-  [ -n "$rom_kb" ] && [ -n "$ovl_kb" ] && FLASH_BYTES="$(( (rom_kb + ovl_kb)]()_]()
+  [ -n "$rom_kb" ] && [ -n "$ovl_kb" ] && FLASH_BYTES="$(( (rom_kb + ovl_kb) * 1024 ))" || FLASH_BYTES=""
+fi
+FLASH_HUMAN="$( [ -n "$FLASH_BYTES" ] && fmt_bytes "$FLASH_BYTES" || echo "н/д" )"
+RAM_HUMAN="$( [ -n "$RAM_KB" ] && fmt_bytes "$((RAM_KB*1024))" || echo "н/д" )"
+
+# ---------- 2) Определяем последний стабильный релиз без sort -V ----------
+RELEASES_HTML="$TMPDIR/releases.html"
+$CURL "https://downloads.openwrt.org/releases/" > "$RELEASES_HTML" || die "Не открыть список релизов"
+
+# Берём все href с видами X.Y/ и X.Y.Z/; фильтруем rc/snapshot; сравниваем версиями в awk.
+LATEST_STABLE="$(awk '
+  match($0,/href="([0-9]+(\.[0-9]+){1,2})\/"/,m){
+    v=m[1]
+    if (v ~ /rc|snapshot/) next
+    # привести к триплету X.Y.Z
+    n=split(v,a,".")
+    x=a[1]+0; y=a[2]+0; z=(n>=3)?a[3]+0:0
+    k = x*1000000 + y*1000 + z
+    if (k>bestk){bestk=k;best=v}
+  }
+  END{ if(best!="") print best }
+' "$RELEASES_HTML")"
+[ -n "$LATEST_STABLE" ] || die "Стабильный релиз не найден"
+
+BASE_URL="https://downloads.openwrt.org/releases/$LATEST_STABLE/targets/$TARGET/$SUBTARGET"
+
+# ---------- 3) Выбираем sysupgrade-образ по листингу каталога ----------
+$CURL "$BASE_URL/" > "$TMPDIR/list.html" || die "Не открыть $BASE_URL/"
+
+BN="$BOARD_NAME"                 # xiaomi,redmi-router-ac2100
+DEV="${BN#*,}"                   # redmi-router-ac2100
+CAND1="$DEV"
+CAND2="$(echo "$BN" | sed 's/,/_/')"        # xiaomi_redmi-router-ac2100
+CAND3="$(echo "$CAND2" | tr '_' '-')"       # xiaomi-redmi-router-ac2100
+
+# Извлекаем имена файлов из href
+FILES="$(sed -n 's/.*href="\([^"]*\)".*/\1/p' "$TMPDIR/list.html" | grep -F "sysupgrade" || true)"
+
+IMAGE_NAME=""
+for pat in "$CAND1" "$CAND2" "$CAND3"; do
+  [ -n "$IMAGE_NAME" ] && break
+  found="$(echo "$FILES" | grep -F "$pat" | head -n1 || true)"
+  [ -n "$found" ] && IMAGE_NAME="$found"
+done
+
+# Если по паттернам не нашли, но sysupgrade-файл один — берём его
+if [ -z "$IMAGE_NAME" ]; then
+  only="$(echo "$FILES" | wc -l)"
+  [ "$only" = "1" ] && IMAGE_NAME="$(echo "$FILES")"
+fi
+
+[ -n "$IMAGE_NAME" ] || die "Не найден sysupgrade-образ для '$MODEL' (board_name: $BOARD_NAME) в $BASE_URL/"
+
+IMAGE_URL="$BASE_URL/$IMAGE_NAME"
+SHA256_URL="$BASE_URL/sha256sums"
+
+# ---------- 4) Скачиваем образ и проверяем SHA256 ----------
+info "Скачиваем образ: $IMAGE_NAME"
+$CURL "$IMAGE_URL" -o "$TMPDIR/$IMAGE_NAME" || die "Не удалось скачать образ"
+$CURL "$SHA256_URL" -o "$TMPDIR/sha256sums" || die "Не удалось скачать sha256sums"
+
+(
+  cd "$TMPDIR"
+  grep "  $IMAGE_NAME\$" sha256sums | sha256sum -c - 
+) || die "Контрольная сумма не совпадает"
+
+# ---------- 5) Проверка совместимости и подтверждение ----------
+info "Проверка совместимости (sysupgrade -T)…"
+sysupgrade -T "$TMPDIR/$IMAGE_NAME" || die "Образ не прошёл проверку совместимости (см. вывод sysupgrade -T)"
+
+CUR_VER="$(. /etc/openwrt_release 2>/dev/null; echo "${DISTRIB_RELEASE:-н/д}")"
+echo
+echo "====== OpenWrt Upgrade ======"
+echo " Текущая версия:   $CUR_VER"
+echo " Новая версия:     $LATEST_STABLE"
+echo " Модель:           $MODEL"
+echo " Board name:       $BOARD_NAME"
+echo " Target:           $TARGET/$SUBTARGET"
+echo " CPU/SoC:          ${CPU:-н/д}"
+echo " RAM:              $RAM_HUMAN"
+echo " Flash:            $FLASH_HUMAN"
+echo " Образ:            $IMAGE_NAME"
+echo " URL:              $IMAGE_URL"
+echo "============================="
+echo
+echo "Важно: безопаснее обновлять прошивкой (sysupgrade), а не отдельными пакетами."
+echo
+
+read -r -p "Прошить до $LATEST_STABLE? [y/N]: " ans
+case "${ans:-}" in
+  y|Y)
+    read -r -p "Сохранить текущие настройки? [Y/n]: " keep
+    if [ "${keep:-Y}" = "n" ] || [ "${keep:-Y}" = "N" ]; then
+      SYSCMD="sysupgrade -n"
+      echo "[WARN] Настройки сохранены НЕ будут."
+    else
+      SYSCMD="sysupgrade"
+      echo "[INFO] Настройки будут сохранены."
+    fi
+    rm -f "$TMPDIR/sha256sums" 2>/dev/null || true
+    echo "[ACTION] Запуск прошивки. Роутер перезагрузится по завершении."
+    $SYSCMD "$TMPDIR/$IMAGE_NAME"
+    ;;
+  *)
+    echo "Отмена. Выход."
+    ;;
+esac
