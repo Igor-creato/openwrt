@@ -15,5 +15,5 @@ wget -qO- https://raw.githubusercontent.com/Igor-creato/openwrt/main/singbox-rou
 ```
 Обновление openwrt
 ```ash
-sh -c "$(curl -fsSL https://raw.githubusercontent.com/Igor-creato/openwrt/refs/heads/main/safe-openwrt-upgrade.sh)"
+sh -c "$(curl -fsSL https://raw.githubusercontent.com/Igor-creato/openwrt/main/safe-openwrt-upgrade.sh)"
 ```
