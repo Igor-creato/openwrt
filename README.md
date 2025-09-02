@@ -13,3 +13,7 @@ wget -qO- https://raw.githubusercontent.com/Igor-creato/openwrt/main/vless-multi
 ```ash
 wget -qO- https://raw.githubusercontent.com/Igor-creato/openwrt/main/singbox-route-switch.sh | ash -s -- -l
 ```
+Обновление openwrt
+```ash
+sh -c "$(curl -fsSL https://raw.githubusercontent.com/Igor-creato/openwrt/refs/heads/main/safe-openwrt-upgrade.sh)"
+```
