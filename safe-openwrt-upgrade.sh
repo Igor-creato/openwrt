@@ -76,21 +76,38 @@ fi
 if [ -n "${FLASH_BYTES:-}" ]; then FLASH_HUMAN="$(fmt_bytes "$FLASH_BYTES")"; else FLASH_HUMAN="н/д"; fi
 if [ -n "${RAM_KB:-}" ]; then RAM_HUMAN="$(fmt_bytes $(( ${RAM_KB:-0} * 1024 )) )"; else RAM_HUMAN="н/д"; fi
 
-# ---------- 2) Последний стабильный релиз (без sort -V) ----------
+# ---------- 2) Последний стабильный релиз (упрощённый парсинг для BusyBox awk) ----------
 RELEASES_HTML="$TMPDIR/releases.html"
 $CURL "https://downloads.openwrt.org/releases/" > "$RELEASES_HTML" || die "Не открыть список релизов"
 
-LATEST_STABLE="$(awk '
-  match($0,/href="([0-9]+(\.[0-9]+){1,2})\/"/,m){
-    v=m[1]
-    if (v ~ /rc|snapshot/) next
-    n=split(v,a,".")
-    x=a[1]+0; y=a[2]+0; z=(n>=3)?a[3]+0:0
-    k = x*1000000 + y*1000 + z
-    if (k>bestk){bestk=k;best=v}
+# Упрощённый парсинг без функции match() с 3 аргументами
+LATEST_STABLE="$(awk -F'"' '
+  /href="[0-9]+(\.[0-9]+){1,2}\/"/ {
+    for (i=1; i<=NF; i++) {
+      if ($i ~ /^[0-9]+(\.[0-9]+){1,2}\/$/) {
+        v = $i
+        gsub(/\//, "", v)
+        # Пропускаем rc и snapshot версии
+        if (v ~ /rc|snapshot/) continue
+        # Разбиваем версию на части
+        n = split(v, a, ".")
+        x = a[1]+0
+        y = (n>=2) ? a[2]+0 : 0
+        z = (n>=3) ? a[3]+0 : 0
+        # Создаём числовой ключ для сравнения
+        k = x*1000000 + y*1000 + z
+        if (k > bestk) {
+          bestk = k
+          best = v
+        }
+      }
+    }
   }
-  END{ if(best!="") print best }
+  END { 
+    if (best != "") print best 
+  }
 ' "$RELEASES_HTML")"
+
 [ -n "$LATEST_STABLE" ] || die "Стабильный релиз не найден"
 
 BASE_URL="https://downloads.openwrt.org/releases/$LATEST_STABLE/targets/$TARGET/$SUBTARGET"
