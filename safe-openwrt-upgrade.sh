@@ -30,7 +30,7 @@ json_get(){
 MODEL="$(json_get '@.model')"
 BOARD_NAME="$(json_get '@.board_name')"   # напр. xiaomi,redmi-router-ac2100
 
-# Дёргаем целевой target/subtarget из /etc/openwrt_release (не глобальные переменные шелла!)
+# Берём target/subtarget из /etc/openwrt_release
 . /etc/openwrt_release 2>/dev/null || true
 TARGET="${DISTRIB_TARGET%/*}"
 SUBTARGET="${DISTRIB_TARGET#*/}"
@@ -57,21 +57,37 @@ FLASH_BYTES="$(flash_bytes_mtd || true)"
 if [ -z "${FLASH_BYTES:-}" ]; then
   rom_kb="$(df -k /rom 2>/dev/null | awk 'NR==2{print $2}')"
   ovl_kb="$(df -k /overlay 2>/dev/null | awk 'NR==2{print $2}')"
-  [ -n "$rom_kb" ] && [ -n "$ovl_kb" ] && FLASH_BYTES="$(( (rom_kb + ovl_kb) * 1024 ))" || FLASH_BYTES=""
+  # защищённая арифметика с значениями по умолчанию
+  rom_kb="${rom_kb:-0}"; ovl_kb="${ovl_kb:-0}"
+  if [ "$rom_kb" -gt 0 ] || [ "$ovl_kb" -gt 0 ]; then
+    FLASH_BYTES=$(( (rom_kb + ovl_kb) * 1024 ))
+  else
+    FLASH_BYTES=""
+  fi
 fi
-FLASH_HUMAN="$( [ -n "$FLASH_BYTES" ] && fmt_bytes "$FLASH_BYTES" || echo "н/д" )"
-RAM_HUMAN="$( [ -n "$RAM_KB" ] && fmt_bytes "$((RAM_KB*1024))" || echo "н/д" )"
+
+if [ -n "${FLASH_BYTES:-}" ]; then
+  FLASH_HUMAN="$(fmt_bytes "$FLASH_BYTES")"
+else
+  FLASH_HUMAN="н/д"
+fi
+
+if [ -n "${RAM_KB:-}" ]; then
+  # безопасная арифметика: подставляем 0 по умолчанию
+  RAM_HUMAN="$(fmt_bytes $(( ${RAM_KB:-0} * 1024 )) )"
+else
+  RAM_HUMAN="н/д"
+fi
 
 # ---------- 2) Определяем последний стабильный релиз без sort -V ----------
 RELEASES_HTML="$TMPDIR/releases.html"
 $CURL "https://downloads.openwrt.org/releases/" > "$RELEASES_HTML" || die "Не открыть список релизов"
 
-# Берём все href с видами X.Y/ и X.Y.Z/; фильтруем rc/snapshot; сравниваем версиями в awk.
+# Выбираем макс. X.Y[.Z], игнорируем rc/snapshot
 LATEST_STABLE="$(awk '
   match($0,/href="([0-9]+(\.[0-9]+){1,2})\/"/,m){
     v=m[1]
     if (v ~ /rc|snapshot/) next
-    # привести к триплету X.Y.Z
     n=split(v,a,".")
     x=a[1]+0; y=a[2]+0; z=(n>=3)?a[3]+0:0
     k = x*1000000 + y*1000 + z
@@ -92,7 +108,6 @@ CAND1="$DEV"
 CAND2="$(echo "$BN" | sed 's/,/_/')"        # xiaomi_redmi-router-ac2100
 CAND3="$(echo "$CAND2" | tr '_' '-')"       # xiaomi-redmi-router-ac2100
 
-# Извлекаем имена файлов из href
 FILES="$(sed -n 's/.*href="\([^"]*\)".*/\1/p' "$TMPDIR/list.html" | grep -F "sysupgrade" || true)"
 
 IMAGE_NAME=""
