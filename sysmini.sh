@@ -1,13 +1,15 @@
 #!/bin/ash
 # sysmini.sh — мини-мониторинг для OpenWrt (RAM / Storage / CPU / Uptime)
-# Зависимости: стандартный BusyBox. Работает на ash.
+# Совместим с BusyBox без дробного sleep, работает на ash.
 
 set -eu
 
-human() {  # быстрый humanize для KiB
+human_kb() {  # вход: КИЛОБАЙТЫ (как в /proc/meminfo)
   awk '{
-    v=$1; s="B"; if(v>1024){v/=1024;s="KiB"}; if(v>1024){v/=1024;s="MiB"}; if(v>1024){v/=1024;s="GiB"}
-    if(v>=10) printf("%.0f %s\n", v, s); else printf("%.1f %s\n", v, s)
+    v=$1; unit="KiB";
+    if (v>=1048576) { v/=1048576; unit="GiB"; }
+    else if (v>=1024) { v/=1024; unit="MiB"; }
+    if (v>=10) printf("%.0f %s\n", v, unit); else printf("%.1f %s\n", v, unit);
   }'
 }
 
@@ -19,11 +21,11 @@ get_os() {
 
 get_cpu_model() {
   awk -F':' '
-    /model name/ {print $2; found=1; exit}
-    /cpu model/ {print $2; found=1; exit}
-    /Processor/ {print $2; found=1; exit}
-    /system type/ {print $2; found=1; exit}
-  ' /proc/cpuinfo | sed 's/^[ \t]*//'
+    /model name/ {gsub(/^[ \t]+/,"",$2); print $2; found=1; exit}
+    /cpu model/  {gsub(/^[ \t]+/,"",$2); print $2; found=1; exit}
+    /Processor/  {gsub(/^[ \t]+/,"",$2); print $2; found=1; exit}
+    /system type/{gsub(/^[ \t]+/,"",$2); print $2; found=1; exit}
+  ' /proc/cpuinfo
 }
 
 get_uptime() {
@@ -33,13 +35,13 @@ get_uptime() {
 }
 
 get_mem() {
-  # Возвращает: total_kB avail_kB used_kB used_pct
+  # вывод: total_kB avail_kB used_kB used_pct
   awk '
-    /^MemTotal:/ {tot=$2}
-    /^MemAvailable:/ {av=$2}
-    /^MemFree:/ {mf=$2}
-    /^Buffers:/ {bf=$2}
-    /^Cached:/ {ca=$2}
+    /^MemTotal:/      {tot=$2}
+    /^MemAvailable:/  {av=$2}
+    /^MemFree:/       {mf=$2}
+    /^Buffers:/       {bf=$2}
+    /^Cached:/        {ca=$2}
     END{
       if(av==0) av=mf+bf+ca;
       used=tot-av; pct=(tot>0)?int((used*100)/tot):0;
@@ -51,25 +53,28 @@ get_swap() {
   awk '
     /^SwapTotal:/ {st=$2}
     /^SwapFree:/  {sf=$2}
-    END{
-      used=st-sf; pct=(st>0)?int((used*100)/st):0;
-      print st, sf, used, pct
-    }' /proc/meminfo
+    END{ used=st-sf; pct=(st>0)?int((used*100)/st):0; print st, sf, used, pct }' /proc/meminfo
 }
 
-get_loadavg() {
-  awk '{printf "%s %s %s\n",$1,$2,$3}' /proc/loadavg
+get_loadavg() { awk '{printf "%s %s %s\n",$1,$2,$3}' /proc/loadavg; }
+
+sleep_half() {
+  if command -v usleep >/dev/null 2>&1; then usleep 500000; else sleep 1; fi
 }
 
 get_cpu_usage_pct() {
-  # Считаем CPU% по /proc/stat за ~0.5s
-  read cpu a b c d e f g h i j < /proc/stat
-  total1=$((a+b+c+d+e+f+g+h+i+j)); idle1=$d
-  sleep 0.5
-  read cpu a b c d e f g h i j < /proc/stat
-  total2=$((a+b+c+d+e+f+g+h+i+j)); idle2=$d
-  dt=$((total2-total1)); di=$((idle2-idle1))
-  [ "$dt" -gt 0 ] || { echo "0"; return; }
+  # берём 2 среза /proc/stat с паузой (0.5с если есть usleep, иначе 1с)
+  set -- $(sed -n '1s/^cpu[ ]\+//p' /proc/stat)
+  u1=$1; n1=$2; s1=$3; i1=$4; w1=$5; irq1=$6; sirq1=$7; st1=$8; g1=$9; gn1=$10
+  t1=$((u1+n1+s1+i1+w1+irq1+sirq1+st1+g1+gn1))
+  idle1=$((i1+w1))
+  sleep_half
+  set -- $(sed -n '1s/^cpu[ ]\+//p' /proc/stat)
+  u2=$1; n2=$2; s2=$3; i2=$4; w2=$5; irq2=$6; sirq2=$7; st2=$8; g2=$9; gn2=$10
+  t2=$((u2+n2+s2+i2+w2+irq2+sirq2+st2+g2+gn2))
+  idle2=$((i2+w2))
+  dt=$((t2-t1)); di=$((idle2-idle1))
+  [ "$dt" -gt 0 ] || { echo 0; return; }
   awk -v dt="$dt" -v di="$di" 'BEGIN{printf "%d", (100*(dt-di))/dt}'
 }
 
@@ -93,19 +98,18 @@ echo "LoadAvg:   $LOAD"
 echo "CPU usage: ${CPU_PCT}%"
 
 title "Memory (RAM)"
-printf "Total:     %s\n" "$(printf "%s\n" "$MT" | human)"
-printf "Used:      %s  (%s%%)\n" "$(printf "%s\n" "$MU" | human)" "$MP"
-printf "Available: %s\n" "$(printf "%s\n" "$MA" | human)"
+printf "Total:     %s\n" "$(printf "%s\n" "$MT" | human_kb)"
+printf "Used:      %s  (%s%%)\n" "$(printf "%s\n" "$MU" | human_kb)" "$MP"
+printf "Available: %s\n" "$(printf "%s\n" "$MA" | human_kb)"
 
 if [ "${ST:-0}" -gt 0 ]; then
   title "Swap"
-  printf "Total:     %s\n" "$(printf "%s\n" "$ST" | human)"
-  printf "Used:      %s  (%s%%)\n" "$(printf "%s\n" "$SU" | human)" "$SP"
-  printf "Free:      %s\n" "$(printf "%s\n" "$SF" | human)"
+  printf "Total:     %s\n" "$(printf "%s\n" "$ST" | human_kb)"
+  printf "Used:      %s  (%s%%)\n" "$(printf "%s\n" "$SU" | human_kb)" "$SP"
+  printf "Free:      %s\n" "$(printf "%s\n" "$SF" | human_kb)"
 fi
 
 title "Storage"
-# Покажем overlay (rw) и корень
 if mount | grep -q 'on /overlay '; then
   df -h /overlay
 else
@@ -117,7 +121,6 @@ TZPATH="$(ls -d /sys/class/thermal/thermal_zone* 2>/dev/null | head -n1 || true)
 if [ -n "$TZPATH" ] && [ -f "$TZPATH/temp" ]; then
   TRAW="$(cat "$TZPATH/temp" 2>/dev/null || echo "")"
   if [ -n "$TRAW" ]; then
-    # Значение обычно в миллиградусах
     if [ "$TRAW" -gt 1000 ] 2>/dev/null; then
       T="$(awk -v t="$TRAW" 'BEGIN{printf("%.1f", t/1000)}')"
     else
@@ -128,9 +131,8 @@ if [ -n "$TZPATH" ] && [ -f "$TZPATH/temp" ]; then
   fi
 fi
 
-# Топ процессов (опционально, если busybox top поддерживает -n)
+# Top (если поддерживается -n 1)
 if top -n 1 >/dev/null 2>&1; then
   title "Top (by CPU)"
-  # У BusyBox нет batch-режима -b, но -n 1 выводит один снапшот
   top -n 1 | sed -n '1,15p'
 fi
