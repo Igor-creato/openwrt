@@ -1,4 +1,4 @@
-Sistem info
+System info
 ```ash
 curl -fsSL https://raw.githubusercontent.com/Igor-creato/openwrt/main/sysmini.sh | ash -s --
 ```
