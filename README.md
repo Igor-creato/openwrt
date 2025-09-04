@@ -17,11 +17,12 @@ wget -qO- https://raw.githubusercontent.com/Igor-creato/openwrt/main/singbox-rou
 ```ash
 sh -c "$(curl -fsSL https://raw.githubusercontent.com/Igor-creato/openwrt/main/safe-openwrt-upgrade.sh)"
 ```
-# 1) Скачаем свежую версию в /tmp (обход кеша через query string)
+Установка с Xray-core (дефолт):
 ```
-curl -fsSLo /tmp/safe-openwrt-upgrade.sh "https://raw.githubusercontent.com/Igor-creato/openwrt/main/safe-openwrt-upgrade.sh?$(date +%s)"
+sh -c "$(wget -qO- https://raw.githubusercontent.com/Igor-creato/openwrt/main/install-passwall2.sh)"
 ```
-# 2) Запуск с трассировкой
+Установка с Sing-box:
 ```
-ash -x /tmp/safe-openwrt-upgrade.sh
+ENGINE=sing sh -c "$(wget -qO- https://raw.githubusercontent.com/Igor-creato/openwrt/main/install-passwall2.sh)"
+
 ```
