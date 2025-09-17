@@ -7,4 +7,6 @@ wget -qO- https://raw.githubusercontent.com/Igor-creato/openwrt/main/sysmini.sh 
 wget -qO- https://raw.githubusercontent.com/Igor-creato/openwrt/main/config.sh | sh
 ```
 Установка sing-box на openwrt
-sh <(wget -O - https://raw.githubusercontent.com/Igor-creato/openwrt/main/getdomains-install.sh)
+```ash
+sh <(wget -O - https://raw.githubusercontent.com/Igor-creato/openwrt/main/install-singbox.sh)
+```
