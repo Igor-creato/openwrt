@@ -5,24 +5,8 @@ curl -fsSL https://raw.githubusercontent.com/Igor-creato/openwrt/main/sysmini.sh
 ```ash
 wget -qO- https://raw.githubusercontent.com/Igor-creato/openwrt/main/sysmini.sh | ash -s --
 ```
- Сборка единого конфигуратора
+Смена конфига vless
  ```ash
 wget -qO- https://raw.githubusercontent.com/Igor-creato/openwrt/main/vless-multi-build.sh | ash -s --
 ```
- Переключатель default-профиля
-```ash
-wget -qO- https://raw.githubusercontent.com/Igor-creato/openwrt/main/singbox-route-switch.sh | ash -s -- -l
-```
-Обновление openwrt
-```ash
-sh -c "$(curl -fsSL https://raw.githubusercontent.com/Igor-creato/openwrt/main/safe-openwrt-upgrade.sh)"
-```
-Установка с Xray-core (дефолт):
-```
-sh -c "$(wget -qO- https://raw.githubusercontent.com/Igor-creato/openwrt/main/install-passwall2.sh)"
-```
-Установка с Sing-box:
-```
-ENGINE=sing sh -c "$(wget -qO- https://raw.githubusercontent.com/Igor-creato/openwrt/main/install-passwall2.sh)"
 
-```
