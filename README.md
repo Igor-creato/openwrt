@@ -7,6 +7,6 @@ wget -qO- https://raw.githubusercontent.com/Igor-creato/openwrt/main/sysmini.sh 
 ```
 Смена конфига vless
  ```ash
-wget -qO- https://raw.githubusercontent.com/Igor-creato/openwrt/main/vless-multi-build.sh | ash -s --
+wget -qO- https://raw.githubusercontent.com/Igor-creato/openwrt/main/config.sh | ash -s --
 ```
 
