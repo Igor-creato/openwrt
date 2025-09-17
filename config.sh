@@ -1,6 +1,6 @@
 #!/bin/sh
 
-# URL декодирование через busybox
+# URL декодирование через busybox httpd
 urldecode() {
     echo "$1" | sed 's/+/ /g' | while IFS= read -r line; do
         httpd -d "$line" 2>/dev/null || echo "$line"
@@ -10,19 +10,22 @@ urldecode() {
 # Парсинг vless URL
 parse_vless() {
     url="$1"
+    # Удаляем vless://
     content=$(echo "$url" | sed 's|^vless://||')
     
+    # Разделяем UUID и остальное
     UUID=$(echo "$content" | cut -d'@' -f1)
     rest=$(echo "$content" | cut -d'@' -f2)
     
+    # Разделяем сервер:порт и параметры
     server_port=$(echo "$rest" | cut -d'?' -f1)
     params=$(echo "$rest" | cut -d'?' -f2 | cut -d'#' -f1)
     
     SERVER=$(echo "$server_port" | cut -d':' -f1)
     PORT=$(echo "$server_port" | cut -d':' -f2)
     
-    # Парсим параметры в отдельный файл
-    echo "$params" | tr '&' '\n' > /tmp/params_raw
+    # Парсим параметры напрямую
+    echo "$params" | tr '&' '\n' > /tmp/params_list
     
     while IFS='=' read -r key value; do
         case "$key" in
@@ -32,14 +35,14 @@ parse_vless() {
             "sid") SHORT_ID=$(urldecode "$value") ;;
             "flow") FLOW=$(urldecode "$value") ;;
         esac
-    done < /tmp/params_raw
+    done < /tmp/params_list
     
-    rm -f /tmp/params_raw
+    rm -f /tmp/params_list
 }
 
 # Генерация конфига
 gen_config() {
-cat > /tmp/sb_config.json << EOF
+cat << EOF > /tmp/sb_config.json
 {
   "log": {
     "level": "debug"
@@ -90,16 +93,10 @@ EOF
 # Основная функция
 main() {
     echo "sing-box updater"
+    echo "Введите vless:// ссылку:"
     
-    # Проверяем аргументы командной строки
-    if [ "$#" -eq 1 ]; then
-        vless_url="$1"
-        echo "Используется ссылка из аргумента"
-    else
-        echo "Введите vless:// ссылку:"
-        # Читаем из /dev/tty чтобы обойти проблему с pipe
-        read vless_url </dev/tty
-    fi
+    # КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: читаем из /dev/tty вместо stdin
+    read vless_url </dev/tty
     
     if ! echo "$vless_url" | grep -q "^vless://"; then
         echo "Ошибка: неверный формат ссылки"
@@ -135,7 +132,7 @@ main() {
         exit 1
     fi
     
-    rm -f /tmp/sb_config.json /tmp/params_raw 2>/dev/null
+    rm -f /tmp/sb_config.json /tmp/params_list 2>/dev/null
 }
 
 main "$@"
