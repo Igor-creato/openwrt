@@ -1,6 +1,6 @@
 #!/bin/sh
 
-# URL декодирование через busybox httpd
+# URL декодирование через busybox
 urldecode() {
     echo "$1" | sed 's/+/ /g' | while IFS= read -r line; do
         httpd -d "$line" 2>/dev/null || echo "$line"
@@ -10,39 +10,36 @@ urldecode() {
 # Парсинг vless URL
 parse_vless() {
     url="$1"
-    # Удаляем vless://
     content=$(echo "$url" | sed 's|^vless://||')
     
-    # Разделяем UUID и остальное
     UUID=$(echo "$content" | cut -d'@' -f1)
     rest=$(echo "$content" | cut -d'@' -f2)
     
-    # Разделяем сервер:порт и параметры
     server_port=$(echo "$rest" | cut -d'?' -f1)
     params=$(echo "$rest" | cut -d'?' -f2 | cut -d'#' -f1)
     
     SERVER=$(echo "$server_port" | cut -d':' -f1)
     PORT=$(echo "$server_port" | cut -d':' -f2)
     
-    # Парсим параметры
-    echo "$params" | tr '&' '\n' | while IFS='=' read -r key value; do
-        case "$key" in
-            "pbk") echo "PUBLIC_KEY='$(urldecode "$value")'" ;;
-            "fp") echo "FINGERPRINT='$(urldecode "$value")'" ;;
-            "sni") echo "SNI='$(urldecode "$value")'" ;;
-            "sid") echo "SHORT_ID='$(urldecode "$value")'" ;;
-            "flow") echo "FLOW='$(urldecode "$value")'" ;;
-        esac
-    done > /tmp/vless_params
+    # Парсим параметры в отдельный файл
+    echo "$params" | tr '&' '\n' > /tmp/params_raw
     
-    # Экспортируем переменные
-    . /tmp/vless_params
-    rm -f /tmp/vless_params
+    while IFS='=' read -r key value; do
+        case "$key" in
+            "pbk") PUBLIC_KEY=$(urldecode "$value") ;;
+            "fp") FINGERPRINT=$(urldecode "$value") ;;
+            "sni") SNI=$(urldecode "$value") ;;
+            "sid") SHORT_ID=$(urldecode "$value") ;;
+            "flow") FLOW=$(urldecode "$value") ;;
+        esac
+    done < /tmp/params_raw
+    
+    rm -f /tmp/params_raw
 }
 
 # Генерация конфига
 gen_config() {
-cat << EOF > /tmp/sb_config.json
+cat > /tmp/sb_config.json << EOF
 {
   "log": {
     "level": "debug"
@@ -93,8 +90,16 @@ EOF
 # Основная функция
 main() {
     echo "sing-box updater"
-    echo "Введите vless:// ссылку:"
-    read vless_url
+    
+    # Проверяем аргументы командной строки
+    if [ "$#" -eq 1 ]; then
+        vless_url="$1"
+        echo "Используется ссылка из аргумента"
+    else
+        echo "Введите vless:// ссылку:"
+        # Читаем из /dev/tty чтобы обойти проблему с pipe
+        read vless_url </dev/tty
+    fi
     
     if ! echo "$vless_url" | grep -q "^vless://"; then
         echo "Ошибка: неверный формат ссылки"
@@ -106,6 +111,7 @@ main() {
     
     if [ -z "$UUID" ] || [ -z "$SERVER" ] || [ -z "$PORT" ]; then
         echo "Ошибка: не удалось извлечь параметры"
+        echo "UUID: $UUID, SERVER: $SERVER, PORT: $PORT"
         exit 1
     fi
     
@@ -129,7 +135,7 @@ main() {
         exit 1
     fi
     
-    rm -f /tmp/sb_config.json /tmp/vless_params 2>/dev/null
+    rm -f /tmp/sb_config.json /tmp/params_raw 2>/dev/null
 }
 
 main "$@"
