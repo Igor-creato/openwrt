@@ -45,7 +45,7 @@ gen_config() {
 cat << EOF > /tmp/sb_config.json
 {
   "log": {
-    "level": "debug"
+    "level": "info"
   },
   "inbounds": [
     {
