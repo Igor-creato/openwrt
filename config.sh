@@ -53,7 +53,7 @@ cat << EOF > /tmp/sb_config.json
       "interface_name": "tun0",
       "domain_strategy": "ipv4_only",
       "address": ["172.16.250.1/30"],
-      "auto_route": false,
+      "auto_route": true,
       "strict_route": false,
       "sniff": true
     }
