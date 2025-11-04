@@ -10,3 +10,7 @@ wget -qO- https://raw.githubusercontent.com/Igor-creato/openwrt/main/config.sh |
 ```ash
 sh <(wget -O - https://raw.githubusercontent.com/Igor-creato/openwrt/main/install-singbox.sh)
 ```
+Проверка памяти роутера
+```ash
+sh <(wget -O - https://raw.githubusercontent.com/Igor-creato/openwrt/main/check_memory.sh)
+```
