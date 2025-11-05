@@ -1,5 +1,8 @@
 #!/bin/sh
 
+# Перенаправляем stdin с /dev/tty для интерактивного ввода
+exec < /dev/tty
+
 echo "Введите домен для добавления:"
 read DOMAIN
 
