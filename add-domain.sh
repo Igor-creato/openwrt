@@ -1,21 +1,24 @@
 #!/bin/sh
 
-# Запрос домена у пользователя
 echo "Введите домен для добавления:"
 read DOMAIN
 
-# Проверка, есть ли домен уже в списке
+if [ -z "$DOMAIN" ]; then
+  echo "Домен не введён, выход."
+  exit 1
+fi
+
 if uci get dhcp.@ipset[0].domain | grep -qw "$DOMAIN"; then
   echo "Домен уже добавлен!"
 else
-  # Добавляем домен в конфигурацию
   uci add_list dhcp.@ipset[0].domain="$DOMAIN"
   uci commit dhcp
   echo "Домен добавлен: $DOMAIN"
 fi
 
-# Перезапускаем dnsmasq и firewall
 /etc/init.d/dnsmasq restart
 /etc/init.d/firewall restart
 
-echo "Процесс завершен."
+echo "Процесс завершен. Скрипт будет удалён."
+
+rm -- "$0"
