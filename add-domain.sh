@@ -23,7 +23,7 @@ fi
 # Загрузка и запуск сервиса из GitHub
 # Замените URL на ваш
 GIT_URL="https://raw.githubusercontent.com/openwrt/add-domain.sh"
-TARGET_PATH="/usr/local/bin/мой_скрипт.sh"
+TARGET_PATH="/usr/local/bin/add-domain.sh"
 
 # Загрузка скрипта
 wget -O "$TARGET_PATH" "$GIT_URL"
